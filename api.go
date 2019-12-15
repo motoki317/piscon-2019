@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 )
 
@@ -56,19 +58,28 @@ const (
 	RequestTimeout int = 5
 )
 
-var client *http.Client
+var (
+	client   *http.Client
+	maxConns int
+)
 
 func init() {
 	client = createHTTPClient()
+	var err error
+	maxConns, err = strconv.Atoi(os.Getenv("MAX_CONNECTIONS"))
+	if err != nil {
+		maxConns = 20
+		fmt.Println(err)
+	}
 }
 
 // createHTTPClient for connection re-use
 func createHTTPClient() *http.Client {
 	client := &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConns:        20,
-			MaxConnsPerHost:     20,
-			MaxIdleConnsPerHost: 20,
+			MaxIdleConns:        maxConns,
+			MaxConnsPerHost:     maxConns,
+			MaxIdleConnsPerHost: maxConns,
 		},
 		Timeout: time.Duration(RequestTimeout) * time.Second,
 	}
