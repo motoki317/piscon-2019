@@ -68,6 +68,7 @@ func init() {
 func createHTTPClient() *http.Client {
 	client := &http.Client{
 		Transport: &http.Transport{
+			MaxIdleConns:        MaxIdleConnections,
 			MaxConnsPerHost:     MaxConnections,
 			MaxIdleConnsPerHost: MaxIdleConnections,
 		},
