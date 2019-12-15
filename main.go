@@ -984,11 +984,59 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	sellers := make(map[int64]*UserSimple)
+	buyers := make(map[int64]*UserSimple)
+	sellerIds := make([]int64, 0)
+	buyerIds := make([]int64, 0)
+	for _, v := range items {
+		sellerIds = append(sellerIds, v.SellerID)
+		if v.BuyerID != 0 {
+			buyerIds = append(buyerIds, v.BuyerID)
+		}
+	}
+	sellersList := []User{}
+	buyersList := []User{}
+
+	inQuery, inArgs, err := sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", sellerIds)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	err = dbx.Select(&sellersList, inQuery, inArgs...)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	inQuery, inArgs, err = sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", buyerIds)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	err = dbx.Select(&buyersList, inQuery, inArgs...)
+	if err != nil {
+		log.Print(err)
+		outputErrorMsg(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	for _, v := range sellersList {
+		sellers[v.ID] = &UserSimple{ID: v.ID, AccountName: v.AccountName, NumSellItems: v.NumSellItems}
+	}
+	for _, v := range buyersList {
+		buyers[v.ID] = &UserSimple{ID: v.ID, AccountName: v.AccountName, NumSellItems: v.NumSellItems}
+	}
+
 	itemDetails := []ItemDetail{}
 	hasNext := false
 	for _, item := range items {
-		seller, err := getUserSimpleByID(tx, item.SellerID)
-		if err != nil {
+		seller, ok := sellers[item.SellerID]
+		if !ok {
 			outputErrorMsg(w, http.StatusNotFound, "seller not found")
 			_ = tx.Rollback()
 			return
@@ -1003,7 +1051,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		itemDetail := ItemDetail{
 			ID:       item.ID,
 			SellerID: item.SellerID,
-			Seller:   &seller,
+			Seller:   seller,
 			// BuyerID
 			// Buyer
 			Status:      item.Status,
@@ -1020,14 +1068,14 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if item.BuyerID != 0 {
-			buyer, err := getUserSimpleByID(tx, item.BuyerID)
-			if err != nil {
+			buyer, ok := buyers[item.BuyerID]
+			if !ok {
 				outputErrorMsg(w, http.StatusNotFound, "buyer not found")
 				_ = tx.Rollback()
 				return
 			}
 			itemDetail.BuyerID = item.BuyerID
-			itemDetail.Buyer = &buyer
+			itemDetail.Buyer = buyer
 		}
 
 		transactionEvidence := TransactionEvidence{}
