@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"time"
 )
 
 const (
@@ -50,6 +51,32 @@ type APIShipmentStatusReq struct {
 	ReserveID string `json:"reserve_id"`
 }
 
+// https://stackoverflow.com/questions/17948827/reusing-http-connections-in-golang
+const (
+	MaxConnections     int = 50
+	MaxIdleConnections int = 50
+	RequestTimeout     int = 5
+)
+
+var client *http.Client
+
+func init() {
+	client = createHTTPClient()
+}
+
+// createHTTPClient for connection re-use
+func createHTTPClient() *http.Client {
+	client := &http.Client{
+		Transport: &http.Transport{
+			MaxConnsPerHost:     MaxConnections,
+			MaxIdleConnsPerHost: MaxIdleConnections,
+		},
+		Timeout: time.Duration(RequestTimeout) * time.Second,
+	}
+
+	return client
+}
+
 func APIPaymentToken(paymentURL string, param *APIPaymentServiceTokenReq) (*APIPaymentServiceTokenRes, error) {
 	b, _ := json.Marshal(param)
 
@@ -61,7 +88,7 @@ func APIPaymentToken(paymentURL string, param *APIPaymentServiceTokenReq) (*APIP
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +123,7 @@ func APIShipmentCreate(shipmentURL string, param *APIShipmentCreateReq) (*APIShi
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", IsucariAPIToken)
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +158,7 @@ func APIShipmentRequest(shipmentURL string, param *APIShipmentRequestReq) ([]byt
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", IsucariAPIToken)
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +187,7 @@ func APIShipmentStatus(shipmentURL string, param *APIShipmentStatusReq) (*APIShi
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", IsucariAPIToken)
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
