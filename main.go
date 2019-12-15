@@ -741,7 +741,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 	}
 	sellersList := []UserSimple{}
 
-	inQuery, inArgs, err = sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", sellerIds)
+	inQuery, inArgs, err = sqlx.In("SELECT id, account_name, num_sell_items FROM `users` WHERE `id` IN (?)", sellerIds)
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
