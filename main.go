@@ -65,6 +65,7 @@ var (
 	dbx             *sqlx.DB
 	store           sessions.Store
 	categoriesCache []Category
+	configsCache    []Config
 )
 
 type Config struct {
@@ -289,6 +290,8 @@ func initCache() {
 		log.Print(err)
 		return
 	}
+
+	configsCache = make([]Config, 0)
 }
 
 func main() {
@@ -459,16 +462,16 @@ func getCategoriesUnderParent(parentId int) []int {
 }
 
 func getConfigByName(name string) (string, error) {
-	config := Config{}
-	err := dbx.Get(&config, "SELECT * FROM `configs` WHERE `name` = ?", name)
-	if err == sql.ErrNoRows {
-		return "", nil
+	return getConfigByCache(name), nil
+}
+
+func getConfigByCache(name string) string {
+	for _, v := range configsCache {
+		if v.Name == name {
+			return v.Val
+		}
 	}
-	if err != nil {
-		log.Print(err)
-		return "", err
-	}
-	return config.Val, err
+	return ""
 }
 
 func getPaymentServiceURL() string {
@@ -508,6 +511,11 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		outputErrorMsg(w, http.StatusInternalServerError, "exec init.sh error")
 		return
 	}
+
+	configsCache = make([]Config, 0)
+
+	configsCache = append(configsCache, Config{Name: "payment_service_url", Val: ri.PaymentServiceURL})
+	configsCache = append(configsCache, Config{Name: "shipment_service_url", Val: ri.ShipmentServiceURL})
 
 	_, err = dbx.Exec(
 		"INSERT INTO `configs` (`name`, `val`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `val` = VALUES(`val`)",
