@@ -960,6 +960,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	itemDetails := []ItemDetail{}
+	hasNext := false
 	for _, item := range items {
 		seller, err := getUserSimpleByID(tx, item.SellerID)
 		if err != nil {
@@ -1044,10 +1045,13 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		itemDetails = append(itemDetails, itemDetail)
+		if len(itemDetails) > TransactionsPerPage {
+			hasNext = true
+			break
+		}
 	}
 	_ = tx.Commit()
 
-	hasNext := false
 	if len(itemDetails) > TransactionsPerPage {
 		hasNext = true
 		itemDetails = itemDetails[0:TransactionsPerPage]
