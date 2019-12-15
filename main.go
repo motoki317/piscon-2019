@@ -733,9 +733,21 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	itemSimples := []ItemSimple{}
+
+	sellers := make(map[int64]*UserSimple)
+	sellerIds := make([]int64, 0)
+	for _, v := range items {
+		sellerIds = append(sellerIds, v.SellerID)
+	}
+	sellersList := []UserSimple{}
+	err = dbx.Select(&sellersList, "SELECT * FROM `users` WHERE `id` IN (?)", sellerIds)
+	for _, v := range sellersList {
+		sellers[v.ID] = &v
+	}
+
 	for _, item := range items {
-		seller, err := getUserSimpleByID(dbx, item.SellerID)
-		if err != nil {
+		seller, ok := sellers[item.SellerID]
+		if !ok {
 			outputErrorMsg(w, http.StatusNotFound, "seller not found")
 			return
 		}
