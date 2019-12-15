@@ -739,9 +739,9 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 	for _, v := range items {
 		sellerIds = append(sellerIds, v.SellerID)
 	}
-	sellersList := []UserSimple{}
+	sellersList := []User{}
 
-	inQuery, inArgs, err = sqlx.In("SELECT id, account_name, num_sell_items FROM `users` WHERE `id` IN (?)", sellerIds)
+	inQuery, inArgs, err = sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", sellerIds)
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
@@ -755,7 +755,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, v := range sellersList {
-		sellers[v.ID] = &v
+		sellers[v.ID] = &UserSimple{ID: v.ID, AccountName: v.AccountName, NumSellItems: v.NumSellItems}
 	}
 
 	for _, item := range items {
