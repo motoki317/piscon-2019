@@ -66,6 +66,7 @@ var (
 	store           sessions.Store
 	categoriesCache []Category
 	configsCache    []Config
+	campaignRate    int
 )
 
 type Config struct {
@@ -324,6 +325,11 @@ func main() {
 	if password == "" {
 		password = "isucari"
 	}
+	campaignRate, err = strconv.Atoi(os.Getenv("CAMPAIGN"))
+	if err != nil {
+		campaignRate = 0
+		fmt.Println(err)
+	}
 
 	dsn := fmt.Sprintf(
 		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
@@ -540,7 +546,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 
 	res := resInitialize{
 		// キャンペーン実施時には還元率の設定を返す。詳しくはマニュアルを参照のこと。
-		Campaign: 0,
+		Campaign: campaignRate,
 		// 実装言語を返す
 		Language: "Go",
 	}

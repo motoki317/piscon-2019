@@ -53,9 +53,7 @@ type APIShipmentStatusReq struct {
 
 // https://stackoverflow.com/questions/17948827/reusing-http-connections-in-golang
 const (
-	MaxConnections     int = 50
-	MaxIdleConnections int = 50
-	RequestTimeout     int = 5
+	RequestTimeout int = 5
 )
 
 var client *http.Client
@@ -68,9 +66,9 @@ func init() {
 func createHTTPClient() *http.Client {
 	client := &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConns:        MaxIdleConnections,
-			MaxConnsPerHost:     MaxConnections,
-			MaxIdleConnsPerHost: MaxIdleConnections,
+			MaxIdleConns:        20,
+			MaxConnsPerHost:     20,
+			MaxIdleConnsPerHost: 20,
 		},
 		Timeout: time.Duration(RequestTimeout) * time.Second,
 	}
