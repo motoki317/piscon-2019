@@ -1011,18 +1011,20 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inQuery, inArgs, err = sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", buyerIds)
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		return
-	}
+	if len(buyerIds) != 0 {
+		inQuery, inArgs, err = sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", buyerIds)
+		if err != nil {
+			log.Print(err)
+			outputErrorMsg(w, http.StatusInternalServerError, "db error")
+			return
+		}
 
-	err = dbx.Select(&buyersList, inQuery, inArgs...)
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		return
+		err = dbx.Select(&buyersList, inQuery, inArgs...)
+		if err != nil {
+			log.Print(err)
+			outputErrorMsg(w, http.StatusInternalServerError, "db error")
+			return
+		}
 	}
 
 	for _, v := range sellersList {
