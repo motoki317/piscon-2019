@@ -61,9 +61,10 @@ const (
 )
 
 var (
-	templates *template.Template
-	dbx       *sqlx.DB
-	store     sessions.Store
+	templates       *template.Template
+	dbx             *sqlx.DB
+	store           sessions.Store
+	categoriesCache []Category
 )
 
 type Config struct {
@@ -279,6 +280,17 @@ func init() {
 	))
 }
 
+func initCache() {
+	categoriesCache = make([]Category, 0)
+
+	err := dbx.Select(&categoriesCache, "SELECT * FROM `categories`")
+	if err != nil {
+
+		log.Print(err)
+		return
+	}
+}
+
 func main() {
 	// pprof server
 	go func() {
@@ -324,6 +336,8 @@ func main() {
 		log.Fatalf("failed to connect to DB: %s.", err.Error())
 	}
 	defer dbx.Close()
+
+	initCache()
 
 	mux := goji.NewMux()
 
@@ -414,7 +428,7 @@ func getUserSimpleByID(q sqlx.Queryer, userID int64) (userSimple UserSimple, err
 }
 
 func getCategoryByID(q sqlx.Queryer, categoryID int) (category Category, err error) {
-	err = sqlx.Get(q, &category, "SELECT * FROM `categories` WHERE `id` = ?", categoryID)
+	category = getCategoryByCache(categoryID)
 	if category.ParentID != 0 {
 		parentCategory, err := getCategoryByID(q, category.ParentID)
 		if err != nil {
@@ -423,6 +437,25 @@ func getCategoryByID(q sqlx.Queryer, categoryID int) (category Category, err err
 		category.ParentCategoryName = parentCategory.CategoryName
 	}
 	return category, err
+}
+
+func getCategoryByCache(categoryID int) Category {
+	for _, v := range categoriesCache {
+		if v.ID == categoryID {
+			return v
+		}
+	}
+	return Category{}
+}
+
+func getCategoriesUnderParent(parentId int) []int {
+	ret := make([]int, 0)
+	for _, v := range categoriesCache {
+		if v.ParentID == parentId {
+			ret = append(ret, v.ID)
+		}
+	}
+	return ret
 }
 
 func getConfigByName(name string) (string, error) {
@@ -455,7 +488,7 @@ func getShipmentServiceURL() string {
 }
 
 func getIndex(w http.ResponseWriter, r *http.Request) {
-	templates.ExecuteTemplate(w, "index.html", struct{}{})
+	_ = templates.ExecuteTemplate(w, "index.html", struct{}{})
 }
 
 func postInitialize(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +503,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command("../sql/init.sh")
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stderr
-	cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		outputErrorMsg(w, http.StatusInternalServerError, "exec init.sh error")
 		return
@@ -505,7 +538,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(res)
+	_ = json.NewEncoder(w).Encode(res)
 }
 
 func getNewItems(w http.ResponseWriter, r *http.Request) {
@@ -601,7 +634,7 @@ func getNewItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(rni)
+	_ = json.NewEncoder(w).Encode(rni)
 }
 
 func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
@@ -618,13 +651,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var categoryIDs []int
-	err = dbx.Select(&categoryIDs, "SELECT id FROM `categories` WHERE parent_id=?", rootCategory.ID)
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		return
-	}
+	categoryIDs := getCategoriesUnderParent(rootCategory.ID)
 
 	query := r.URL.Query()
 	itemIDStr := query.Get("item_id")
@@ -731,7 +758,7 @@ func getNewCategoryItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(rni)
+	_ = json.NewEncoder(w).Encode(rni)
 
 }
 
@@ -840,7 +867,7 @@ func getUserItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(rui)
+	_ = json.NewEncoder(w).Encode(rui)
 }
 
 func getTransactions(w http.ResponseWriter, r *http.Request) {
@@ -894,7 +921,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Print(err)
 			outputErrorMsg(w, http.StatusInternalServerError, "db error")
-			tx.Rollback()
+			_ = tx.Rollback()
 			return
 		}
 	} else {
@@ -913,7 +940,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Print(err)
 			outputErrorMsg(w, http.StatusInternalServerError, "db error")
-			tx.Rollback()
+			_ = tx.Rollback()
 			return
 		}
 	}
@@ -923,13 +950,13 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 		seller, err := getUserSimpleByID(tx, item.SellerID)
 		if err != nil {
 			outputErrorMsg(w, http.StatusNotFound, "seller not found")
-			tx.Rollback()
+			_ = tx.Rollback()
 			return
 		}
 		category, err := getCategoryByID(tx, item.CategoryID)
 		if err != nil {
 			outputErrorMsg(w, http.StatusNotFound, "category not found")
-			tx.Rollback()
+			_ = tx.Rollback()
 			return
 		}
 
@@ -956,7 +983,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			buyer, err := getUserSimpleByID(tx, item.BuyerID)
 			if err != nil {
 				outputErrorMsg(w, http.StatusNotFound, "buyer not found")
-				tx.Rollback()
+				_ = tx.Rollback()
 				return
 			}
 			itemDetail.BuyerID = item.BuyerID
@@ -969,7 +996,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			// It's able to ignore ErrNoRows
 			log.Print(err)
 			outputErrorMsg(w, http.StatusInternalServerError, "db error")
-			tx.Rollback()
+			_ = tx.Rollback()
 			return
 		}
 
@@ -978,13 +1005,13 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			err = tx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ?", transactionEvidence.ID)
 			if err == sql.ErrNoRows {
 				outputErrorMsg(w, http.StatusNotFound, "shipping not found")
-				tx.Rollback()
+				_ = tx.Rollback()
 				return
 			}
 			if err != nil {
 				log.Print(err)
 				outputErrorMsg(w, http.StatusInternalServerError, "db error")
-				tx.Rollback()
+				_ = tx.Rollback()
 				return
 			}
 			ssr, err := APIShipmentStatus(getShipmentServiceURL(), &APIShipmentStatusReq{
@@ -993,7 +1020,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Print(err)
 				outputErrorMsg(w, http.StatusInternalServerError, "failed to request to shipment service")
-				tx.Rollback()
+				_ = tx.Rollback()
 				return
 			}
 
@@ -1004,7 +1031,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 
 		itemDetails = append(itemDetails, itemDetail)
 	}
-	tx.Commit()
+	_ = tx.Commit()
 
 	hasNext := false
 	if len(itemDetails) > TransactionsPerPage {
@@ -1018,7 +1045,7 @@ func getTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(rts)
+	_ = json.NewEncoder(w).Encode(rts)
 
 }
 
@@ -1117,7 +1144,7 @@ func getItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(itemDetail)
+	_ = json.NewEncoder(w).Encode(itemDetail)
 }
 
 func postItemEdit(w http.ResponseWriter, r *http.Request) {
@@ -1173,13 +1200,13 @@ func postItemEdit(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if targetItem.Status != ItemStatusOnSale {
 		outputErrorMsg(w, http.StatusForbidden, "販売中の商品以外編集できません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1192,7 +1219,7 @@ func postItemEdit(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1200,14 +1227,14 @@ func postItemEdit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(&resItemEdit{
+	_ = json.NewEncoder(w).Encode(&resItemEdit{
 		ItemID:        targetItem.ID,
 		ItemPrice:     targetItem.Price,
 		ItemCreatedAt: targetItem.CreatedAt.Unix(),
@@ -1268,7 +1295,7 @@ func getQRCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "image/png")
-	w.Write(shipping.ImgBinary)
+	_, _ = w.Write(shipping.ImgBinary)
 }
 
 func postBuy(w http.ResponseWriter, r *http.Request) {
@@ -1298,26 +1325,26 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", rb.ItemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if targetItem.Status != ItemStatusOnSale {
 		outputErrorMsg(w, http.StatusForbidden, "item is not for sale")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if targetItem.SellerID == buyer.ID {
 		outputErrorMsg(w, http.StatusForbidden, "自分の商品は買えません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1325,14 +1352,14 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ? FOR UPDATE", targetItem.SellerID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "seller not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1341,7 +1368,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "category id error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1360,7 +1387,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1369,7 +1396,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1383,7 +1410,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1396,7 +1423,7 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "failed to request to shipment service")
-		tx.Rollback()
+		_ = tx.Rollback()
 
 		return
 	}
@@ -1411,25 +1438,25 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "payment service is failed")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if pstr.Status == "invalid" {
 		outputErrorMsg(w, http.StatusBadRequest, "カード情報に誤りがあります")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if pstr.Status == "fail" {
 		outputErrorMsg(w, http.StatusBadRequest, "カードの残高が足りません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if pstr.Status != "ok" {
 		outputErrorMsg(w, http.StatusBadRequest, "想定外のエラー")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1450,14 +1477,14 @@ func postBuy(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidenceID})
+	_ = json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidenceID})
 }
 
 func postShip(w http.ResponseWriter, r *http.Request) {
@@ -1508,38 +1535,38 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&item, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if item.Status != ItemStatusTrading {
 		outputErrorMsg(w, http.StatusForbidden, "商品が取引中ではありません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	err = tx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `id` = ? FOR UPDATE", transactionEvidence.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "transaction_evidences not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if transactionEvidence.Status != TransactionEvidenceStatusWaitShipping {
 		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1547,13 +1574,13 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ? FOR UPDATE", transactionEvidence.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "shippings not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1563,7 +1590,7 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "failed to request to shipment service")
-		tx.Rollback()
+		_ = tx.Rollback()
 
 		return
 	}
@@ -1578,17 +1605,17 @@ func postShip(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 
 	rps := resPostShip{
 		Path:      fmt.Sprintf("/transactions/%d.png", transactionEvidence.ID),
 		ReserveID: shipping.ReserveID,
 	}
-	json.NewEncoder(w).Encode(rps)
+	_ = json.NewEncoder(w).Encode(rps)
 }
 
 func postShipDone(w http.ResponseWriter, r *http.Request) {
@@ -1639,38 +1666,38 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&item, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "items not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if item.Status != ItemStatusTrading {
 		outputErrorMsg(w, http.StatusForbidden, "商品が取引中ではありません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	err = tx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `id` = ? FOR UPDATE", transactionEvidence.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "transaction_evidences not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if transactionEvidence.Status != TransactionEvidenceStatusWaitShipping {
 		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1678,13 +1705,13 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&shipping, "SELECT * FROM `shippings` WHERE `transaction_evidence_id` = ? FOR UPDATE", transactionEvidence.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "shippings not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1694,14 +1721,14 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "failed to request to shipment service")
-		tx.Rollback()
+		_ = tx.Rollback()
 
 		return
 	}
 
 	if !(ssr.Status == ShippingsStatusShipping || ssr.Status == ShippingsStatusDone) {
 		outputErrorMsg(w, http.StatusForbidden, "shipment service側で配送中か配送完了になっていません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1714,7 +1741,7 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1727,14 +1754,14 @@ func postShipDone(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
+	_ = json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
 }
 
 func postComplete(w http.ResponseWriter, r *http.Request) {
@@ -1784,38 +1811,38 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&item, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "items not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if item.Status != ItemStatusTrading {
 		outputErrorMsg(w, http.StatusForbidden, "商品が取引中ではありません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	err = tx.Get(&transactionEvidence, "SELECT * FROM `transaction_evidences` WHERE `item_id` = ? FOR UPDATE", itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "transaction_evidences not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if transactionEvidence.Status != TransactionEvidenceStatusWaitDone {
 		outputErrorMsg(w, http.StatusForbidden, "準備ができていません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1824,7 +1851,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1834,14 +1861,14 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "failed to request to shipment service")
-		tx.Rollback()
+		_ = tx.Rollback()
 
 		return
 	}
 
 	if !(ssr.Status == ShippingsStatusDone) {
 		outputErrorMsg(w, http.StatusBadRequest, "shipment service側で配送完了になっていません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1854,7 +1881,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1867,7 +1894,7 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -1880,14 +1907,14 @@ func postComplete(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
+	_ = json.NewEncoder(w).Encode(resBuy{TransactionEvidenceID: transactionEvidence.ID})
 }
 
 func postSell(w http.ResponseWriter, r *http.Request) {
@@ -1979,13 +2006,13 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ? FOR UPDATE", user.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "user not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -2025,10 +2052,10 @@ func postSell(w http.ResponseWriter, r *http.Request) {
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	tx.Commit()
+	_ = tx.Commit()
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(resSell{ID: itemID})
+	_ = json.NewEncoder(w).Encode(resSell{ID: itemID})
 }
 
 func secureRandomStr(b int) string {
@@ -2067,19 +2094,19 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&targetItem, "SELECT * FROM `items` WHERE `id` = ? FOR UPDATE", itemID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "item not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
 	if targetItem.SellerID != user.ID {
 		outputErrorMsg(w, http.StatusForbidden, "自分の商品以外は編集できません")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -2087,13 +2114,13 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 	err = tx.Get(&seller, "SELECT * FROM `users` WHERE `id` = ? FOR UPDATE", user.ID)
 	if err == sql.ErrNoRows {
 		outputErrorMsg(w, http.StatusNotFound, "user not found")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -2101,7 +2128,7 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 	// last_bump + 3s > now
 	if seller.LastBump.Add(BumpChargeSeconds).After(now) {
 		outputErrorMsg(w, http.StatusForbidden, "Bump not allowed")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
@@ -2130,14 +2157,14 @@ func postBump(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Print(err)
 		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		tx.Rollback()
+		_ = tx.Rollback()
 		return
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(&resItemEdit{
+	_ = json.NewEncoder(w).Encode(&resItemEdit{
 		ItemID:        targetItem.ID,
 		ItemPrice:     targetItem.Price,
 		ItemCreatedAt: targetItem.CreatedAt.Unix(),
@@ -2158,18 +2185,11 @@ func getSettings(w http.ResponseWriter, r *http.Request) {
 
 	ress.PaymentServiceURL = getPaymentServiceURL()
 
-	categories := []Category{}
-
-	err := dbx.Select(&categories, "SELECT * FROM `categories`")
-	if err != nil {
-		log.Print(err)
-		outputErrorMsg(w, http.StatusInternalServerError, "db error")
-		return
-	}
-	ress.Categories = categories
+	// Use cache
+	ress.Categories = categoriesCache
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(ress)
+	_ = json.NewEncoder(w).Encode(ress)
 }
 
 func postLogin(w http.ResponseWriter, r *http.Request) {
@@ -2226,7 +2246,7 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(u)
+	_ = json.NewEncoder(w).Encode(u)
 }
 
 func postRegister(w http.ResponseWriter, r *http.Request) {
@@ -2292,7 +2312,7 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(u)
+	_ = json.NewEncoder(w).Encode(u)
 }
 
 func getReports(w http.ResponseWriter, r *http.Request) {
@@ -2305,7 +2325,7 @@ func getReports(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
-	json.NewEncoder(w).Encode(transactionEvidences)
+	_ = json.NewEncoder(w).Encode(transactionEvidences)
 }
 
 func outputErrorMsg(w http.ResponseWriter, status int, msg string) {
@@ -2313,7 +2333,7 @@ func outputErrorMsg(w http.ResponseWriter, status int, msg string) {
 
 	w.WriteHeader(status)
 
-	json.NewEncoder(w).Encode(struct {
+	_ = json.NewEncoder(w).Encode(struct {
 		Error string `json:"error"`
 	}{Error: msg})
 }
